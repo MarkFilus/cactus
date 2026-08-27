@@ -1,0 +1,20 @@
+name: gatelint-runner-smoke
+
+on:
+  push:
+    branches:
+      - work/gatelint-real-proof-20260827
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: runner smoke
+        run: |
+          set -euo pipefail
+          uname -a
+          echo GATELINT_RUNNER_OK
