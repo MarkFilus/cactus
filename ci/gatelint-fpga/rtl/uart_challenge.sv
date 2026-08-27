@@ -39,6 +39,8 @@ module uart_challenge #(
     logic [31:0] tx_challenge = 0;
     logic [31:0] tx_response = 0;
 
+    assign tx = tx_busy ? tx_shift[0] : 1'b1;
+
     function automatic logic is_hex(input logic [7:0] value);
         begin
             is_hex = ((value >= "0") && (value <= "9")) ||
@@ -68,19 +70,19 @@ module uart_challenge #(
     endfunction
 
     function automatic logic [3:0] word_nibble(
-        input logic [31:0] word,
+        input logic [31:0] value,
         input logic [2:0] index
     );
         begin
             case (index)
-                0: word_nibble = word[31:28];
-                1: word_nibble = word[27:24];
-                2: word_nibble = word[23:20];
-                3: word_nibble = word[19:16];
-                4: word_nibble = word[15:12];
-                5: word_nibble = word[11:8];
-                6: word_nibble = word[7:4];
-                default: word_nibble = word[3:0];
+                0: word_nibble = value[31:28];
+                1: word_nibble = value[27:24];
+                2: word_nibble = value[23:20];
+                3: word_nibble = value[19:16];
+                4: word_nibble = value[15:12];
+                5: word_nibble = value[11:8];
+                6: word_nibble = value[7:4];
+                default: word_nibble = value[3:0];
             endcase
         end
     endfunction
@@ -117,8 +119,6 @@ module uart_challenge #(
         end
     endfunction
 
-    // Two-flop synchronization plus an 8N1 receiver. The first sample occurs
-    // at the middle of the start bit, followed by one sample per data bit.
     always_ff @(posedge clk) begin
         rx_meta <= rx;
         rx_sync <= rx_meta;
@@ -166,8 +166,6 @@ module uart_challenge #(
         end
     end
 
-    // Parse ?XXXXXXXX\n and emit a one-cycle response request. A malformed
-    // frame is discarded and cannot accidentally satisfy the host proof.
     always_ff @(posedge clk) begin
         response_valid <= 1'b0;
         if (!rst_n) begin
@@ -219,11 +217,8 @@ module uart_challenge #(
         end
     end
 
-    // Transmit GATELINT XXXXXXXX YYYYYYYY\n, where Y is bound to X by the
-    // same transform used by the host verifier.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            tx <= 1'b1;
             tx_busy <= 1'b0;
             message_active <= 1'b0;
             tx_count <= 0;
@@ -244,7 +239,6 @@ module uart_challenge #(
                 if (tx_count != 0) begin
                     tx_count <= tx_count - 1'b1;
                 end else if (tx_bit_index == 9) begin
-                    tx <= 1'b1;
                     tx_busy <= 1'b0;
                     tx_bit_index <= 0;
                     if (char_index == 26)
@@ -254,12 +248,10 @@ module uart_challenge #(
                 end else begin
                     tx_bit_index <= tx_bit_index + 1'b1;
                     tx_shift <= {1'b1, tx_shift[9:1]};
-                    tx <= tx_shift[1];
                     tx_count <= DIVISOR - 1;
                 end
             end else if (message_active) begin
                 tx_shift <= {1'b1, message_byte(char_index, tx_challenge, tx_response), 1'b0};
-                tx <= 1'b0;
                 tx_count <= DIVISOR - 1;
                 tx_bit_index <= 0;
                 tx_busy <= 1'b1;
