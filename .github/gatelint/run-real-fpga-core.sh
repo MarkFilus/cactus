@@ -102,6 +102,9 @@ techmap -wb -D EQUIV -autoproc -map +/ice40/cells_sim.v
 equiv_make gold gate equiv
 equiv_simple -seq 12 equiv
 equiv_induct -seq 24 equiv
+equiv_remove equiv
+opt_clean equiv
+equiv_simple -seq 1 equiv
 equiv_status -assert equiv
 YOSYS
 yosys -s "$work/equivalence.ys" \
