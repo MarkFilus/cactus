@@ -1,0 +1,9 @@
+# iCEBreaker 12 MHz oscillator
+set_io -nowarn CLK 35
+
+# FTDI UART (FPGA perspective)
+set_io -nowarn RX 6
+set_io -nowarn TX 9
+
+# red status LED (active low)
+set_io -nowarn LEDR_N 11
