@@ -87,6 +87,7 @@ stage logical-equivalence
 cat > "$work/equivalence.ys" <<YOSYS
 read_verilog -sv "$work/vhdl_counter.v" "$root/rtl/uart_challenge.sv" "$root/rtl/top.v"
 prep -top top
+flatten
 memory_map
 opt -full
 check -assert
