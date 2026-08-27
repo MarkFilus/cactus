@@ -1,0 +1,74 @@
+name: gatelint-real-fpga-core
+
+on:
+  push:
+    branches:
+      - work/gatelint-real-proof-20260827
+    paths:
+      - 'ci/gatelint-fpga/**'
+      - '.github/gatelint/**'
+      - '.github/workflows/gatelint-real-fpga-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gatelint-real-fpga-core
+  cancel-in-progress: true
+
+jobs:
+  icebreaker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      OSS_CAD_ARCHIVE: oss-cad-suite-linux-x64-20260826.tgz
+      OSS_CAD_URL: https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-08-26/oss-cad-suite-linux-x64-20260826.tgz
+      OSS_CAD_SHA256: b9c1f7a53a8b144be8ab7f8fd754b98b0d2b1a0b72d39165f7bb2bf104b2b652
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cache pinned OSS CAD Suite
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/${{ env.OSS_CAD_ARCHIVE }}
+          key: gatelint-oss-cad-20260826-${{ env.OSS_CAD_SHA256 }}
+
+      - name: download and verify toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/$OSS_CAD_ARCHIVE"
+          if [[ ! -s "$archive" ]]; then
+            curl --fail --location --retry 5 --retry-all-errors --output "$archive" "$OSS_CAD_URL"
+          fi
+          printf '%s  %s\n' "$OSS_CAD_SHA256" "$archive" | sha256sum -c -
+          rm -rf "$RUNNER_TEMP/oss-cad-suite"
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          source "$RUNNER_TEMP/oss-cad-suite/environment"
+          for tool in ghdl iverilog vvp yosys nextpnr-ice40 icetime icepack iceunpack; do
+            command -v "$tool"
+          done
+
+      - name: run complete real-tool core under 60 seconds
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/oss-cad-suite/environment"
+          root="$GITHUB_WORKSPACE/ci/gatelint-fpga"
+          work="$GITHUB_WORKSPACE/test-results/gatelint-real-fpga-core"
+          rm -rf "$work"
+          mkdir -p "$work"
+          start_ns=$(date +%s%N)
+          timeout --signal=TERM --kill-after=5s 60s \
+            bash "$GITHUB_WORKSPACE/.github/gatelint/run-real-fpga-core.sh" "$root" "$work"
+          end_ns=$(date +%s%N)
+          python3 "$GITHUB_WORKSPACE/.github/gatelint/summarize-real-fpga-core.py" \
+            "$work" "$start_ns" "$end_ns"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gatelint-real-fpga-core-${{ github.sha }}
+          if-no-files-found: error
+          path: test-results/gatelint-real-fpga-core/
