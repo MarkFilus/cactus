@@ -34,7 +34,7 @@ module uart_challenge #(
     logic message_active = 1'b0;
     logic [15:0] tx_count = 0;
     logic [3:0] tx_bit_index = 0;
-    logic [9:0] tx_shift = 10'h3ff;
+    (* keep = 1 *) logic [9:0] tx_shift = 10'h3ff;
     logic [4:0] char_index = 0;
     logic [31:0] tx_challenge = 0;
     logic [31:0] tx_response = 0;
