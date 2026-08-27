@@ -61,7 +61,7 @@ jobs:
           mkdir -p "$work"
           start_ns=$(date +%s%N)
           timeout --signal=TERM --kill-after=5s 60s \
-            bash "$GITHUB_WORKSPACE/.github/gatelint/run-real-fpga-core.sh" "$root" "$work"
+            bash "$GITHUB_WORKSPACE/.github/gatelint/run-real-fpga-core-v2.sh" "$root" "$work"
           end_ns=$(date +%s%N)
           python3 "$GITHUB_WORKSPACE/.github/gatelint/summarize-real-fpga-core.py" \
             "$work" "$start_ns" "$end_ns"
