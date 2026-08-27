@@ -91,7 +91,18 @@ flatten
 memory_map
 opt -full
 check -assert
-equiv_opt -assert -map +/ice40/cells_sim.v synth_ice40 -device u -top top
+hierarchy -auto-top
+design -save preopt
+synth_ice40 -device u -top top
+check -assert
+design -stash postopt
+design -copy-from preopt -as gold A:top
+design -copy-from postopt -as gate A:top
+techmap -wb -D EQUIV -autoproc -map +/ice40/cells_sim.v
+equiv_make gold gate equiv
+equiv_simple -seq 12 equiv
+equiv_induct -seq 24 equiv
+equiv_status -assert equiv
 YOSYS
 yosys -s "$work/equivalence.ys" \
   > "$work/equivalence.stdout" 2> "$work/equivalence.stderr"
