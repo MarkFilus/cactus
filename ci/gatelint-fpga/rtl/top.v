@@ -1,6 +1,4 @@
-module top #(
-    parameter integer LED_BIT = 23
-) (
+module top (
     input  wire CLK,
     input  wire RX,
     output wire LEDR_N,
@@ -31,5 +29,5 @@ module top #(
         .tx(TX)
     );
 
-    assign LEDR_N = ~count[LED_BIT];
+    assign LEDR_N = ~count[23];
 endmodule
