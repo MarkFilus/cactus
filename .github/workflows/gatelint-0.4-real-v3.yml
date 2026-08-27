@@ -1,0 +1,178 @@
+name: gatelint-0.4-real-fpga-proof-v3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - work/gatelint-0.4-real-proof-20260826
+    paths:
+      - 'ci/gatelint-0.4/**'
+      - '.github/workflows/gatelint-0.4-real-v3.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gatelint-0.4-real-v3
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OSS_CAD_ARCHIVE: oss-cad-suite-linux-x64-20260826.tgz
+      OSS_CAD_URL: https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-08-26/oss-cad-suite-linux-x64-20260826.tgz
+      OSS_CAD_SHA256: b9c1f7a53a8b144be8ab7f8fd754b98b0d2b1a0b72d39165f7bb2bf104b2b652
+      SOURCE_SHA256: 042d164c287fd9e9b6664858a84cea967feafdb215f2062b5b3a76201feb7a8c
+      EVIDENCE_DIR: ci/gatelint-0.4/evidence
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/gatelint-0.4-real-proof-20260826
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/${{ env.OSS_CAD_ARCHIVE }}
+          key: oss-cad-suite-linux-x64-20260826-${{ env.OSS_CAD_SHA256 }}
+
+      - name: execute real proof
+        id: proof
+        shell: bash
+        run: |
+          set -uo pipefail
+          rm -rf "$EVIDENCE_DIR"
+          mkdir -p "$EVIDENCE_DIR"
+          exec > >(tee "$EVIDENCE_DIR/run.log") 2>&1
+          phase=source
+          status=fail
+          trap 'rc=$?; python3 - "$EVIDENCE_DIR/status.json" "$status" "$phase" "$rc" <<"PY"
+          import json, sys
+          from pathlib import Path
+          p, status, phase, rc = Path(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4])
+          p.write_text(json.dumps({"schemaVersion":3,"status":status,"phase":phase,"exitCode":rc},indent=2,sort_keys=True)+"\n")
+          PY
+          exit $rc' EXIT
+
+          archive="$RUNNER_TEMP/gatelint-source.tar.xz"
+          cat ci/gatelint-0.4/source.b64.part-* | base64 -d > "$archive"
+          printf '%s  %s\n' "$SOURCE_SHA256" "$archive" | sha256sum -c - || exit 10
+          rm -rf "$RUNNER_TEMP/gatelint-src"
+          mkdir -p "$RUNNER_TEMP/gatelint-src"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/gatelint-src" || exit 11
+          root="$RUNNER_TEMP/gatelint-src/gatelint-0.4.0"
+          test -f "$root/go.mod" || exit 12
+
+          phase=toolchain
+          cad="$RUNNER_TEMP/$OSS_CAD_ARCHIVE"
+          if [[ ! -s "$cad" ]]; then
+            curl --fail --location --retry 5 --retry-all-errors --output "$cad" "$OSS_CAD_URL" || exit 20
+          fi
+          printf '%s  %s\n' "$OSS_CAD_SHA256" "$cad" | sha256sum -c - || exit 21
+          rm -rf "$RUNNER_TEMP/oss-cad-suite"
+          tar -xzf "$cad" -C "$RUNNER_TEMP" || exit 22
+          source "$RUNNER_TEMP/oss-cad-suite/environment"
+          for tool in ghdl iverilog vvp yosys nextpnr-ice40 icetime icepack iceunpack; do
+            command -v "$tool" || exit 23
+            "$tool" --version 2>&1 | head -n 3 || true
+          done
+
+          phase=tests
+          cd "$root"
+          go test ./... || exit 30
+          go vet ./... || exit 31
+          mkdir -p .gatelint/bin test-results/fpga-real
+          go build -trimpath -buildvcs=false -o .gatelint/bin/gatelint ./cmd/gatelint || exit 32
+
+          phase=doctor
+          project="$root/.gatelint/fpga-real-project"
+          .gatelint/bin/gatelint fpga selftest --dir "$project" --force --scaffold-only || exit 40
+          .gatelint/bin/gatelint fpga doctor --config "$project/gatelint.json" --format json > test-results/fpga-real/doctor.json || exit 41
+
+          phase=prove
+          start_ns=$(date +%s%N)
+          timeout --signal=TERM --kill-after=5s 70s .gatelint/bin/gatelint fpga prove \
+            --config "$project/gatelint.json" --timeout 60s --format json \
+            --output test-results/fpga-real/report.json --show-output || exit 50
+          end_ns=$(date +%s%N)
+
+          phase=validate
+          python3 - "$root" "$project" "$start_ns" "$end_ns" <<'PY' || exit 60
+          import hashlib, json, os, sys
+          from pathlib import Path
+          root, project = Path(sys.argv[1]), Path(sys.argv[2])
+          start_ns, end_ns = int(sys.argv[3]), int(sys.argv[4])
+          out = root / 'test-results/fpga-real'
+          report = json.loads((out/'report.json').read_text())
+          doctor = json.loads((out/'doctor.json').read_text())
+          assert doctor['schemaVersion'] == 3 and doctor['ok'] is True, doctor
+          assert report['schemaVersion'] == 3 and report['kind'] == 'fpga-proof'
+          assert report['status'] == 'pass' and report['underDeadline'] is True, report
+          assert 0 <= report['durationMs'] <= 60000
+          assert report['languages'] == ['vhdl','systemverilog','verilog']
+          assert set(report['requiredLanguages']) == {'vhdl','systemverilog','verilog'}
+          assert report['board']['id'] == 'icebreaker'
+          assert report['board']['yosysDevice'] == 'u'
+          assert report['board']['uartRxPin'] == '6' and report['board']['uartTxPin'] == '9'
+          assert doctor['constraintCount'] == 4
+          assert report['clockPort'] == 'CLK' and report['clockTargetMHz'] == 12
+          assert report['clockMaxMHz'] >= report['clockTargetMHz']
+          assert not report['programRequested'] and not report['programmed']
+          assert not report['hardwareVerified'] and not report['hardwareFresh']
+          stages = {x['id']:x for x in report['stages']}
+          core = ['preflight','vhdl','simulate','synth','constraints','simulate-synth','lvs','drc','timing','pack','roundtrip']
+          assert all(stages[x]['status'] == 'pass' for x in core), stages
+          assert stages['program']['status'] == 'skipped' and stages['hardware']['status'] == 'skipped'
+          for key, rel in report['artifacts'].items():
+            if key == 'proofReport' or key not in report['artifactSha256']: continue
+            p = Path(rel)
+            if not p.is_absolute(): p = project / p
+            assert hashlib.sha256(p.read_bytes()).hexdigest() == report['artifactSha256'][key], (key,p)
+          provenance = {
+            'schemaVersion':3,
+            'kind':'gatelint-real-fpga-toolchain-proof',
+            'status':'pass',
+            'ossCadSuite':{'url':os.environ['OSS_CAD_URL'],'sha256':os.environ['OSS_CAD_SHA256']},
+            'sourceSha256':os.environ['SOURCE_SHA256'],
+            'externalWallMs':round((end_ns-start_ns)/1_000_000,3),
+            'reportedWallMs':report['durationMs'],
+            'languages':report['languages'],
+            'clockTargetMHz':report['clockTargetMHz'],
+            'clockMaxMHz':report['clockMaxMHz'],
+            'coreStages':core,
+            'tools':doctor['tools'],
+            'physicalBoardExecuted':False,
+          }
+          (out/'provenance.json').write_text(json.dumps(provenance,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(provenance,sort_keys=True))
+          PY
+
+          cp test-results/fpga-real/*.json "$GITHUB_WORKSPACE/$EVIDENCE_DIR/"
+          find "$project/.gatelint/fpga" -maxdepth 2 -type f -print0 | sort -z | xargs -0 sha256sum > "$GITHUB_WORKSPACE/$EVIDENCE_DIR/artifact-files.sha256" || true
+          status=pass
+          phase=complete
+
+      - name: publish evidence to branch
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$EVIDENCE_DIR/status.json" || printf '{"schemaVersion":3,"status":"fail","phase":"workflow","exitCode":99}\n' > "$EVIDENCE_DIR/status.json"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$EVIDENCE_DIR"
+          if ! git diff --cached --quiet; then
+            git commit -m 'ci: record gatelint 0.4 real-tool evidence [skip ci]'
+            git push origin HEAD:work/gatelint-0.4-real-proof-20260826
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gatelint-0.4-real-${{ github.sha }}
+          if-no-files-found: error
+          path: ci/gatelint-0.4/evidence/
