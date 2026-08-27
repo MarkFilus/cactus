@@ -14,8 +14,15 @@ wall_ms = round((end_ns - start_ns) / 1_000_000, 3)
 if wall_ms > 60_000:
     raise SystemExit(f'core flow exceeded 60 seconds: {wall_ms} ms')
 
-timing = (work / 'icetime.txt').read_text(encoding='utf-8', errors='replace')
-estimate = re.search(r'Timing estimate:\s*([0-9.]+)\s*ns\s*\(([0-9.]+)\s*MHz\)', timing, re.I)
+timing = '\n'.join(
+    (work / name).read_text(encoding='utf-8', errors='replace')
+    for name in ('icetime.txt', 'icetime.stdout', 'icetime.stderr')
+)
+estimate = re.search(
+    r'(?:Timing estimate|Total path delay):\s*([0-9.]+)\s*ns\s*\(([0-9.]+)\s*MHz\)',
+    timing,
+    re.I,
+)
 if not estimate:
     raise SystemExit('missing IceTime estimate')
 
